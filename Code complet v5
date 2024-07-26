@@ -1,0 +1,242 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import os
+import tkinter as tk
+from tkinter import messagebox
+import numpy as np
+from PIL import Image, ImageTk
+
+# Configurer le backend de Matplotlib pour Tkinter
+plt.switch_backend('agg')
+
+# Charger les données
+file_path = r'C:\Users\stag01.RA\Documents\Variante de produit (product.product)(5).xlsx'
+data = pd.read_excel(file_path)
+
+# Supprimer les lignes vides si nécessaire
+data.dropna(how='all', inplace=True)
+
+# Filtrer les données pour ne garder que les lignes où 'Dédié à maintenance' est vrai
+filtered_data = data[data['Dédié à maintenance'] == True]
+
+# Créer un dossier pour enregistrer les étiquettes si ce n'est pas déjà fait
+output_dir = r'C:\Users\stag01.RA\Documents\etiquettes_images'
+os.makedirs(output_dir, exist_ok=True)
+
+# Dimensions de la page et des autocollants
+page_width, page_height = 210, 297  # A4 dimensions in mm
+label_width, label_height = 70, 35  # Label dimensions in mm
+margin_top, margin_bottom = 8, 8  # Top and bottom margins in mm
+
+# Charger l'image de fond
+logo_path = r'C:\Users\stag01.RA\Documents\Logo-ROSI-purple.png'
+logo_image = Image.open(logo_path)
+logo_image = logo_image.resize((int(label_width / 25.4 * 1000), int(label_height / 25.4 * 1000)))  # Redimensionner à une taille plus grande
+
+# Créer l'interface graphique
+root = tk.Tk()
+root.title("Générateur d'Étiquettes")
+root.state('zoomed')  # Ouvrir en mode plein écran
+
+# Charger l'image pour la fenêtre principale
+main_logo_path = r'C:\Users\stag01.RA\Documents\Logo Programme étiquette.webp'
+main_logo_image = Image.open(main_logo_path)
+main_logo_image = main_logo_image.resize((200, 200))  # Redimensionner l'image principale
+main_logo_photo = ImageTk.PhotoImage(main_logo_image)
+
+# Afficher l'image principale en haut à droite
+image_label = tk.Label(root, image=main_logo_photo)
+image_label.place(relx=0.95, rely=0.05, anchor='ne')
+
+# Fonction pour créer une étiquette
+def create_label(row):
+    fig, ax = plt.subplots(figsize=(label_width / 25.4, label_height / 25.4))  # Convert mm to inches
+    ax.axis('off')
+
+    # Afficher l'image de fond centrée
+    ax.imshow(logo_image, aspect='auto', extent=(0, label_width / 25.4, 0, label_height / 25.4), alpha=0.5)
+
+    # Vérifier chaque champ et remplacer les valeurs manquantes par 'vide'
+    nom_piece = row['Nom'] if pd.notna(row['Nom']) else 'vide'
+    num_ref = row['Référence interne'] if pd.notna(row['Référence interne']) else 'vide'
+    secteur = row['Code-barres'] if pd.notna(row['Code-barres']) else 'vide'
+    rangement = row['Étiquettes de produit'] if pd.notna(row['Étiquettes de produit']) else 'vide'
+
+    text = (
+        f"Nom de la pièce/outil : {nom_piece}\n"
+        f"Numéro de référence : {num_ref}\n"
+        f"Secteur : {secteur}\n"
+        f"Rangement n° : {rangement}"
+    )
+    ax.text(0.5, 0.5, text, ha='center', va='center', wrap=True, fontsize=6, bbox=dict(facecolor='white', alpha=0.7))  # Réduire la taille de la police
+    fig.canvas.draw()
+    return fig
+
+# Fonction pour ajouter l'étiquette à la page d'autocollants
+def add_label_to_page(page_fig, label_fig, pos):
+    label_ax = label_fig.axes[0]
+    label_image = np.frombuffer(label_fig.canvas.buffer_rgba(), dtype=np.uint8)
+    label_image = label_image.reshape(label_fig.canvas.get_width_height()[::-1] + (4,))
+
+    row, col = divmod(pos - 1, 3)  # Calculer la ligne et la colonne
+    x = col * label_width / page_width
+    y = 1 - (margin_top / page_height + (row + 1) * label_height / page_height)
+
+    page_ax = page_fig.add_axes([x, y, label_width / page_width, label_height / page_height])
+    page_ax.imshow(label_image)
+    page_ax.axis('off')
+
+# Fonction pour générer les étiquettes pour une pièce unique
+def generate_label_single():
+    try:
+        selected_index = listbox.curselection()
+        label_pos = int(single_label_pos_entry.get())
+
+        if not selected_index:
+            messagebox.showerror("Erreur", "Veuillez sélectionner une pièce dans la liste.")
+            return
+
+        if label_pos < 1 or label_pos > 24:
+            messagebox.showerror("Erreur", "L'emplacement de l'étiquette doit être entre 1 et 24.")
+            return
+
+        selected_index = int(selected_index[0])
+        row_index = int(listbox.get(selected_index).split()[0])
+        row = filtered_data.iloc[row_index]
+
+        if not hasattr(generate_labels, "page_fig"):
+            generate_labels.page_fig = plt.figure(figsize=(page_width / 25.4, page_height / 25.4))  # Convert mm to inches
+
+        label_fig = create_label(row)
+        add_label_to_page(generate_labels.page_fig, label_fig, label_pos)
+        plt.close(label_fig)
+
+        messagebox.showinfo("Succès", "Étiquette générée.")
+
+    except ValueError:
+        messagebox.showerror("Erreur", "Veuillez entrer des positions valides.")
+    except Exception as e:
+        messagebox.showerror("Erreur", f"Une erreur s'est produite : {e}")
+
+# Fonction pour générer les étiquettes pour un intervalle donné
+def generate_labels():
+    try:
+        start_row = int(start_row_entry.get())
+        end_row = int(end_row_entry.get())
+        label_pos = int(interval_label_pos_entry.get())
+
+        if start_row < 1 or end_row > len(filtered_data) or start_row > end_row:
+            messagebox.showerror("Erreur", "Intervalle de lignes invalide.")
+            return
+
+        if label_pos < 1 or label_pos > 24:
+            messagebox.showerror("Erreur", "L'emplacement de l'étiquette doit être entre 1 et 24.")
+            return
+
+        if (end_row - start_row + 1) > 24:
+            messagebox.showerror("Erreur", "L'intervalle de lignes ne doit pas dépasser 24 lignes.")
+            return
+
+        # Créer une nouvelle page d'autocollants si nécessaire
+        if not hasattr(generate_labels, "page_fig"):
+            generate_labels.page_fig = plt.figure(figsize=(page_width / 25.4, page_height / 25.4))  # Convert mm to inches
+
+        for pos, row_idx in enumerate(range(start_row - 1, end_row), start=label_pos):
+            if pos > 24:
+                messagebox.showerror("Erreur", "Le nombre total d'étiquettes dépasse 24.")
+                return
+            row = filtered_data.iloc[row_idx]
+            label_fig = create_label(row)
+            add_label_to_page(generate_labels.page_fig, label_fig, pos)
+            plt.close(label_fig)
+
+        messagebox.showinfo("Succès", f"Étiquettes générées pour les lignes {start_row} à {end_row}.")
+
+    except ValueError:
+        messagebox.showerror("Erreur", "Veuillez entrer des positions valides.")
+    except Exception as e:
+        messagebox.showerror("Erreur", f"Une erreur s'est produite : {e}")
+
+# Fonction pour mettre à jour la liste des lignes affichées
+def update_listbox(search_term):
+    listbox.delete(0, tk.END)
+    for index, row in filtered_data.iterrows():
+        if search_term.lower() in str(row['Référence interne']).lower():
+            listbox.insert(tk.END, f"{index} - {row['Nom']} - {row['Référence interne']}")
+
+# Fonction pour enregistrer la page d'autocollants
+def save_labels():
+    try:
+        page_title = page_title_entry.get()
+        if not page_title:
+            raise ValueError("Le titre de la page ne peut pas être vide.")
+        if hasattr(generate_labels, "page_fig"):
+            file_path = os.path.join(output_dir, f'{page_title}.png')
+            generate_labels.page_fig.savefig(file_path, dpi=300)
+            messagebox.showinfo("Succès", f"Page d'autocollants enregistrée sous le nom {page_title}.png dans le dossier {output_dir}")
+        else:
+            messagebox.showerror("Erreur", "Aucune étiquette à enregistrer.")
+    except Exception as e:
+        messagebox.showerror("Erreur", f"Une erreur s'est produite : {e}")
+
+# Fonction pour réduire la fenêtre
+def minimize_window():
+    root.iconify()
+
+# Ajouter les champs de saisie et les labels
+tk.Label(root, text="Titre de la page d'autocollants :", font=("Helvetica", 12)).pack(pady=5)
+page_title_entry = tk.Entry(root, font=("Helvetica", 12), width=25)
+page_title_entry.pack(pady=5)
+
+# Ajouter la barre de recherche
+tk.Label(root, text="Rechercher par Référence interne :", font=("Helvetica", 12)).pack(pady=5)
+search_entry = tk.Entry(root, font=("Helvetica", 12), width=25)
+search_entry.pack(pady=5)
+search_entry.bind('<KeyRelease>', lambda event: update_listbox(search_entry.get()))
+
+# Ajouter la liste des lignes valides
+tk.Label(root, text="Sélectionnez la ligne :", font=("Helvetica", 12)).pack(pady=5)
+listbox = tk.Listbox(root, font=("Helvetica", 12), width=60, height=10)
+listbox.pack(pady=5)
+update_listbox('')  # Initialiser la listbox avec toutes les lignes
+
+# Ajouter le champ pour saisir l'emplacement de l'étiquette pour une pièce unique
+tk.Label(root, text="Emplacement de l'étiquette pour une pièce (1 à 24) :", font=("Helvetica", 12)).pack(pady=5)
+single_label_pos_entry = tk.Entry(root, font=("Helvetica", 12), width=5)
+single_label_pos_entry.pack(pady=5)
+
+# Ajouter le bouton pour générer l'étiquette pour une pièce unique
+generate_single_button = tk.Button(root, text="Ajouter l'étiquette à la page", font=("Helvetica", 12), command=generate_label_single)
+generate_single_button.pack(pady=5)
+
+# Ajouter les champs pour saisir l'intervalle de lignes
+tk.Label(root, text="Ligne de début (1 à {}) :".format(len(filtered_data)), font=("Helvetica", 12)).pack(pady=5)
+start_row_entry = tk.Entry(root, font=("Helvetica", 12), width=5)
+start_row_entry.pack(pady=5)
+
+tk.Label(root, text="Ligne de fin (1 à {}) :".format(len(filtered_data)), font=("Helvetica", 12)).pack(pady=5)
+end_row_entry = tk.Entry(root, font=("Helvetica", 12), width=5)
+end_row_entry.pack(pady=5)
+
+# Ajouter le champ pour saisir l'emplacement de l'étiquette pour un intervalle de lignes
+tk.Label(root, text="Emplacement de l'étiquette pour l'intervalle (1 à 24) :", font=("Helvetica", 12)).pack(pady=5)
+interval_label_pos_entry = tk.Entry(root, font=("Helvetica", 12), width=5)
+interval_label_pos_entry.pack(pady=5)
+
+# Ajouter le bouton pour générer les étiquettes pour l'intervalle de lignes
+generate_interval_button = tk.Button(root, text="Ajouter les étiquettes à la page", font=("Helvetica", 12), command=generate_labels)
+generate_interval_button.pack(pady=5)
+
+# Ajouter le bouton pour enregistrer la page d'autocollants
+save_button = tk.Button(root, text="Enregistrer la page d'autocollants", font=("Helvetica", 12), command=save_labels)
+save_button.pack(pady=5)
+
+# Ajouter le bouton pour réduire la fenêtre
+tk.Button(root, text="Réduire la fenêtre", font=("Helvetica", 12), command=minimize_window).pack(pady=5)
+
+# Ajouter le bouton rouge pour fermer la fenêtre
+close_button = tk.Button(root, text="X", font=("Helvetica", 12), bg="red", fg="white", command=root.destroy)
+close_button.place(x=10, y=10, width=30, height=30)
+
+# Lancer l'interface graphique
+root.mainloop()
